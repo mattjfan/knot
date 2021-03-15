@@ -25,6 +25,8 @@
 #define ARMED_MODE_PIN 2
 #define IS_ARMED() (!digitalRead(ARMED_MODE_PIN))
 
+#define ARMED_GEOFENCE_RADIUS_M 80
+
 unsigned long global_epoch = 0;
 unsigned long global_millis = 0;
 
@@ -84,6 +86,19 @@ String get_position_href(Position p) {
   return  "https://www.google.com/maps/place/" + String(p.lat) + "," + String(p.lng);
 }
 
+unsigned int get_time_delta_ms(Timestamp t0, Timestamp t1) {
+  if (t0.epoch == t1.epoch) {
+    return t1.ms - t0.ms;
+  } else if (t1.epoch == t0.epoch + 1 &&
+      t1.ms < t0.ms) {
+    return (((unsigned int) -1) - t0.ms) + t1.ms;
+  }
+  return (unsigned int) -1;
+}
+unsigned int get_ms_since(Timestamp t0) {
+  return get_time_delta_ms(t0, Timestamp(millis()));
+}
+
 class BaseTracker {
   public:
     BaseTracker() {}
@@ -119,18 +134,6 @@ class BaseTracker {
     }
     double get_distance_from_last_position_() {
       return get_distance_(position, last_update_position);
-    }
-    unsigned int get_time_delta_ms_(Timestamp t0, Timestamp t1) {
-      if (t0.epoch == t1.epoch) {
-        return t1.ms - t0.ms;
-      } else if (t1.epoch == t0.epoch + 1 &&
-          t1.ms < t0.ms) {
-        return (((unsigned int) -1) - t0.ms) + t1.ms;
-      }
-      return (unsigned int) -1;
-    }
-    unsigned int get_ms_since_(Timestamp t0) {
-      return get_time_delta_ms_(t0, Timestamp(millis()));
     }
 };
 
@@ -169,8 +172,10 @@ class ArmedTracker : public BaseTracker {
         }
       }
     }
-  private:
-    // bool is_armed = false;
+  protected:
+    bool has_left_armed_geofence() {
+      return get_distance_from_last_position_() > ARMED_GEOFENCE_RADIUS_M;
+    }
 };
 
 class DynamicTracker : public BaseTracker {
@@ -203,7 +208,7 @@ class DynamicTracker : public BaseTracker {
         last_update_ts = Timestamp(millis());
         last_update_position = position;
         sent_message = false;
-      } else if (get_ms_since_(last_update_ts) > idle_window_ms_) {
+      } else if (get_ms_since(last_update_ts) > idle_window_ms_) {
         if (!sent_message) {
           send_sms_message_(String("I've stopped moving. Here is my current location: ") + get_position_href());
           sent_message = true;
@@ -222,93 +227,35 @@ class DynamicTracker : public BaseTracker {
 ArmedTracker armedTracker;
 DynamicTracker dynamicTracker(IDLE_WINDOW_MS, IDLE_WINDOW_DISTANCE_M, 60 * 60 * 1000);
 
-void setup() {
-
-  while(SEDATED) {}
-  pinMode(ARMED_MODE_PIN, INPUT_PULLUP);
-  // put your setup code here, to run once:
-  #ifdef DEBUG
-    Serial.begin(9600);
-    while(!Serial) {}
-  #endif
-
-  DEBUG_PRINTLN("starting...");
-  if (!GPS.begin(GPS_MODE_SHIELD)) {
-    DEBUG_PRINTLN("Failed to initialize GPS!");
-    while(1) {}
-  }
-  DEBUG_PRINT("Connecting to GSM... ");
-  while(1) {
-//    DEBUG_PRINTLN(".");
-    if (gsmAccess.begin() == GSM_READY) {
-      DEBUG_PRINTLN("GSM connected.");
-      break;
-    } else {
-      DEBUG_PRINTLN("connecting...");
-      delay(1000);
-    }
-  }
-  dynamicTracker.pause();
-}
-
-double get_distance(Position position_a, Position position_b) {
-  double R = 6371.;
-  double delta_lat = (position_b.lat - position_a.lat) / 180 * PI;
-  double delta_lng = (position_b.lng - position_a.lng) / 180 * PI;
-  double a =
-    sin(delta_lat / 2) * sin(delta_lat / 2) +
-    sin(delta_lng / 2) * sin(delta_lng / 2) +
-    cos(position_a.lat * PI / 180) * cos(position_b.lat * PI / 180);
-  return 2 * R * asin(sqrt(a))* 1000; // in meters
-}
-
-
-// distance in meters from armed position
-double get_distance_from_armed_position() {
-  return get_distance(position, armed_position);
-}
-
-bool has_left_armed_geofence() {
-  double THRESHOLD_DISTANCE = 80.0; // dummy value, replace with defined constant
-  return get_distance_from_armed_position() > THRESHOLD_DISTANCE;
-}
-
 String get_last_updated_time_string() {
   return "Last updated " + String(position.ts.epoch * 50) + " days and " + String((int) (position.ts.ms / 1000)) + " seconds";
 }
 
-void send_stolen_warning_message(const char* remote_number) {
-  sms.beginSMS(remote_number);
-  sms.print("WARNING: I was removed from geofence while in ARMED mode.\nIf this wasn't you please respond SUBSCRIBE to receive location updates");
-  // TODO: implement handling for SUBSCRIBE
-  sms.endSMS();
-}
+// void send_message(const char* remote_number) {
+// //  char msg[MAX_SMS_MSG_LENGTH];
+//   if (position.lat <= 0 || position.lng <= 0) { // don't send message if we don't have any data
+//     message_queued = false;
+//     return;
+//   }
+//   String msg;
+//   msg += "KNOT Location Update for " + String(SECRET_DEVICE_NAME) + ":\n";
+//   if (position.lat > 0 && position.lng > 0) {
+//     msg += "  lat: " + String(position.lat) + "\n";
+//     msg += "  lng: " + String(position.lng) + "\n";
+//     msg += "  " + get_last_updated_time_string() + "\n";
+//     msg += "https://www.google.com/maps/place/" + String(position.lat) + "," + String(position.lng);
 
-void send_message(const char* remote_number) {
-//  char msg[MAX_SMS_MSG_LENGTH];
-  if (position.lat <= 0 || position.lng <= 0) { // don't send message if we don't have any data
-    message_queued = false;
-    return;
-  }
-  String msg;
-  msg += "KNOT Location Update for " + String(SECRET_DEVICE_NAME) + ":\n";
-  if (position.lat > 0 && position.lng > 0) {
-    msg += "  lat: " + String(position.lat) + "\n";
-    msg += "  lng: " + String(position.lng) + "\n";
-    msg += "  " + get_last_updated_time_string() + "\n";
-    msg += "https://www.google.com/maps/place/" + String(position.lat) + "," + String(position.lng);
-
-  } else {     // TODO: add option to just not send any message if no data available
-    // TODO: would be cool if we could just queue up a message for when it does become available instead
-    msg += "  no position available :(";
-  }
-  // get send time?
-  // TODO: add check for 
-//  msg += "";
-  sms.beginSMS(remote_number);
-  sms.print(msg.c_str());
-  sms.endSMS();
-}
+//   } else {     // TODO: add option to just not send any message if no data available
+//     // TODO: would be cool if we could just queue up a message for when it does become available instead
+//     msg += "  no position available :(";
+//   }
+//   // get send time?
+//   // TODO: add check for 
+// //  msg += "";
+//   sms.beginSMS(remote_number);
+//   sms.print(msg.c_str());
+//   sms.endSMS();
+// }
 
 /**
  * 
@@ -318,6 +265,9 @@ void handle_incoming_message(char* msg, char* remote_number) {
   DEBUG_PRINT("Remote #: ");
   DEBUG_PRINTLN(remote_number);
   DEBUG_PRINT("msg: ");
+  DEBUG_PRINTLN(msg);
+  DEBUG_PRINTLN("---------------------");
+
   String msg_string = String(msg);
   msg_string.toLowerCase(); // TODO: implement handling of different messages
   if (!strcmp(msg_string.c_str(), "help")) {
@@ -341,9 +291,6 @@ void handle_incoming_message(char* msg, char* remote_number) {
   } else {
     // Don't do anything for now
   }
-  DEBUG_PRINTLN(msg);
-  DEBUG_PRINTLN("---------------------");
-//  send_message(remote_number);
 }
 
 void check_for_messages() {
@@ -368,34 +315,6 @@ void check_for_messages() {
     handle_incoming_message(message,remote_number);
     sms.flush();
   }
-}
-
-void handle_armed() {
-  if (armed &&
-        !armed_message_sent &&
-        has_left_armed_geofence()) {
-    send_message(SECRET_DEFAULT_REMOTE_NUMBER);
-    armed_message_sent = true;
-  }
-}
-
-void check_arming_state() {
-  if (armed != IS_ARMED()) { // if pin is diff than internal state
-    armed = !armed; // set state to match pin state from last measurement (may have changed)
-    if (armed) {
-      // TODO: set up and arm system
-      armed_position = position;
-      queued_armed_gps_update = true;
-      armed_message_sent = false;
-    } else {
-      // TODO: clean up and unarm system
-      armed_message_sent = false;
-    }
-  }
-}
-
-void handle_subscribed_messages() { 
-  //test
 }
 
 void update_GPS_position(int timeout_ms = 1000) {
@@ -429,22 +348,33 @@ void update_GPS_position(int timeout_ms = 1000) {
   GPS.standby(); // put GPS back into sleeping mode
 }
 
-/**
- * time delta calculator
- * t0 is earlier than t1
- */
-unsigned int get_time_delta_ms(Timestamp t0, Timestamp t1) {
-  if (t0.epoch == t1.epoch) {
-    return t1.ms - t0.ms;
-  } else if (t1.epoch == t0.epoch + 1 &&
-      t1.ms < t0.ms) {
-    return (((unsigned int) -1) - t0.ms) + t1.ms;
-  }
-  return (unsigned int) -1;
-}
+void setup() {
 
-unsigned int get_ms_since(Timestamp t0) {
-  return get_time_delta_ms(t0, Timestamp(millis()));
+  while(SEDATED) {}
+  pinMode(ARMED_MODE_PIN, INPUT_PULLUP);
+  // put your setup code here, to run once:
+  #ifdef DEBUG
+    Serial.begin(9600);
+    while(!Serial) {}
+  #endif
+
+  DEBUG_PRINTLN("starting...");
+  if (!GPS.begin(GPS_MODE_SHIELD)) {
+    DEBUG_PRINTLN("Failed to initialize GPS!");
+    while(1) {}
+  }
+  DEBUG_PRINT("Connecting to GSM... ");
+  while(1) {
+//    DEBUG_PRINTLN(".");
+    if (gsmAccess.begin() == GSM_READY) {
+      DEBUG_PRINTLN("GSM connected.");
+      break;
+    } else {
+      DEBUG_PRINTLN("connecting...");
+      delay(1000);
+    }
+  }
+  dynamicTracker.pause(); // subscriptions disabled by default
 }
 
 void loop() {
@@ -453,5 +383,5 @@ void loop() {
   check_epoch();
   armedTracker.tick();
   dynamicTracker.tick();
-  delay(1000) // Lower frequency of ticks to reduce power usage
+  delay(1000); // Lower frequency of ticks to reduce power usage
 }
