@@ -25,4 +25,14 @@ Knot responds to SMS text commands (they can be anycased, but can't include addi
 | update | Sends a text message with the current location|
 
 ## Parts List
-TODO
+Working parts list. Will update when final V1 is assembled
+- (1x) [Arduino MKR GSM 1400](https://store.arduino.cc/usa/mkr-gsm-1400)
+- (1x) [Arduino MKR GPS Shield](https://store.arduino.cc/usa/mkr-gps-shield)
+- (1x) [SIM Card](https://store.hologram.io/store/global-iot-sim-card/17/) (I used a hologram.io SIM, but any SIM valid in your region that supports SMS and a phone number should work fine)
+- (1x) [3.7V 6500 mAh Rechargable LiPo battery](https://www.amazon.com/gp/product/B07TXHX3QT/ref=ppx_yo_dt_b_asin_title_o09_s01?ie=UTF8&psc=1) (You should be fine going for a larger battery as well, it's just a tradeoff between weight/size and battery life. Also note the 3.7V TTL, since the MKR boards don't support higher voltages)
+- (1x) micro UFL GSM antenna
+- (1x) Rocker switch (or other switch, for arming the device)
+- (1x optional) Locking electrical switch (for power on/off)
+- (1x optional) micro-usb cable to splice to external / on-device power so that the device doesn't need to be charged separately
+- (TBD) assorted hardware
+- (TBD) 3d printed parts
