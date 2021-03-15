@@ -1,5 +1,6 @@
 # knot
 ![KNOT](/res/knot_hero_new.png)
+
 **Knot is a DIY SMS-based asset tracking device to mitigate STOLEN or LOST property by tracking them with cellular (GSM 1400) and GPS.**
 
 I wanted some way to track my bike, but couldn't find any really great options available on the internet. I figured it would be pretty easy to build one off-the-shelf using the Arduino MKR GSM 1400 that I could customize and integrate into my bike, and that's what this project is. KNOT just uses SMS so there's virtually no set up or cloud / IOT overhead.
