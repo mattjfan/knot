@@ -20,6 +20,7 @@
 
 #define TIMEOUT_MS_ARMED 15 * 1000
 #define TIMEOUT_MS_UNARMED 10 * 60 * 1000
+#define SMS_TICK_PERIOD_MS 10 * 1000 // ms to wait between calls to SMS.available()
 #define IDLE_WINDOW_MS 10*1000
 #define IDLE_WINDOW_DISTANCE_M 80
 #define ARMED_MODE_PIN 2
@@ -57,11 +58,11 @@ GSM_SMS sms;
 
 Position position = {0};
 Position last_sent_position = {0};
-Position armed_position = {0};
 bool message_queued = false;
 bool armed = false;
 bool armed_message_sent = false;
 Timestamp last_gps_measurement_ts = {0};
+Timestamp last_SMS_available_check_ts = {0};
 //bool force_immediate_gps_update = false;
 bool queued_armed_gps_update = false;
 
@@ -147,6 +148,9 @@ class ArmedTracker : public BaseTracker {
     ArmedTracker() {}
     void update_position() { // callback for global position update queued
       last_update_position = position;
+    }
+    bool is_armed() {
+      return !paused;
     }
     void tick() {
       if (paused == IS_ARMED()) { // if pin is diff than internal state
@@ -294,6 +298,11 @@ void handle_incoming_message(char* msg, char* remote_number) {
 }
 
 void check_for_messages() {
+  #ifdef SMS_TICK_PERIOD_MS
+    if (get_ms_since(last_SMS_available_check_ts) < SMS_TICK_PERIOD_MS) {
+      return; // avoid calling too frequently to help us save battery
+    }
+  #endif
   if (sms.available()) {
     DEBUG_PRINTLN("FOUND MESSAGE");
     char remote_number[20] = {0};
@@ -318,9 +327,10 @@ void check_for_messages() {
 }
 
 void update_GPS_position(int timeout_ms = 1000) {
-  if (!queued_armed_gps_update && ((armed && get_ms_since(last_gps_measurement_ts) < TIMEOUT_MS_ARMED) ||
-      (!armed && get_ms_since(last_gps_measurement_ts) < TIMEOUT_MS_UNARMED)
-      )) {
+  if (position.is_set && !queued_armed_gps_update && (
+      (armedTracker.is_armed() && get_ms_since(last_gps_measurement_ts) < TIMEOUT_MS_ARMED) ||
+      (!armedTracker.is_armed() && get_ms_since(last_gps_measurement_ts) < TIMEOUT_MS_UNARMED)
+  )) {
         // TODO: put into standby if not already
     return;
   }
@@ -341,7 +351,6 @@ void update_GPS_position(int timeout_ms = 1000) {
   
   DEBUG_PRINT("GPS position set"); // TODO: more descriptive debug
   if (queued_armed_gps_update) {
-    // armed_position = position; 
     armedTracker.update_position();
     queued_armed_gps_update = false;
   }
@@ -349,15 +358,20 @@ void update_GPS_position(int timeout_ms = 1000) {
 }
 
 void setup() {
+  while(SEDATED) {} // Just for testing
 
-  while(SEDATED) {}
   pinMode(ARMED_MODE_PIN, INPUT_PULLUP);
-  // put your setup code here, to run once:
+
   #ifdef DEBUG
     Serial.begin(9600);
     while(!Serial) {}
   #endif
 
+  #ifdef LOW_POWER_MODE
+    gsmAccess.lowPowerMode();
+  #endif
+
+  // TODO: add option for GPS as optional, using GSM localization calls as fallback
   DEBUG_PRINTLN("starting...");
   if (!GPS.begin(GPS_MODE_SHIELD)) {
     DEBUG_PRINTLN("Failed to initialize GPS!");
@@ -365,7 +379,6 @@ void setup() {
   }
   DEBUG_PRINT("Connecting to GSM... ");
   while(1) {
-//    DEBUG_PRINTLN(".");
     if (gsmAccess.begin() == GSM_READY) {
       DEBUG_PRINTLN("GSM connected.");
       break;
@@ -375,6 +388,7 @@ void setup() {
     }
   }
   dynamicTracker.pause(); // subscriptions disabled by default
+  // GPS.standby();
 }
 
 void loop() {
