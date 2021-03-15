@@ -1,0 +1,1 @@
+#define MAX_SMS_MSG_LENGTH 200 + 1
